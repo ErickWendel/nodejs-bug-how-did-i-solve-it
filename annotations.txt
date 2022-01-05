@@ -1,0 +1,178 @@
+create problem project
+    package.json add "main"
+
+fork Node.js project - https://github.com/nodejs/node
+git clone git@github.com:ErickWendel/node.git
+read: building 
+
+https://github.com/ErickWendel/node/commits/master
+show erick on the list and get prev commit (https://github.com/ErickWendel/node/commit/0465373d77436d8df5ec4dbe5586747f6341c300)
+
+git checkout 0465373d77436d8df5ec4dbe5586747f6341c300
+
+Open Building.md 
+
+    #### macOS prerequisites
+    #### Building Node.js
+    #### Speeding up frequent rebuilds when developing
+    export CC="ccache cc"    # add to ~/.zshrc or other shell config file
+    export CXX="ccache c++"  # add to ~/.zshrc or other shell config file
+    
+    ./configure --node-builtin-modules-path $(pwd)
+    time make -j16 
+    ./node -v
+    ./node -e "require('child_process')" 
+
+    change lib/internal/child_process.js with console.log 
+    ./node -e "require('child_process')" 
+
+cp -r ../problem test-erick 
+
+Where to change messages
+
+    lib/internal/child_process.js#L346
+        ChildProcess.prototype.spawn
+    
+    child_process.js#L567
+        setupChannel
+        
+
+    child_process.js#L918
+        handleMessage
+        show emit
+
+    #530 - class Control
+        this.pendingMessages = new Set();
+    
+    #emit
+        function emit(event, message, handle) {
+            const args = [event, message, handle];
+            const isInternalMessage = "internalMessage" === event;
+            const hasListenersInstalled = target.listenerCount('message');
+            
+            if (hasListenersInstalled || isInternalMessage) { 
+                target.emit(...args);
+                return;
+            }
+
+            target.pendingMessages.add([event, message, handle]);
+        }
+
+    #637 - target.on('internalMessage',
+          
+        target.on('newListener', function() {
+            const messages = target.pendingMessages;
+            if (!messages.size) return;
+
+            for (const messageParams of messages) {
+                process.nextTick(target.emit.bind(target), ...messageParams);
+            }
+            messages.clear();
+        });
+
+        change test-erick 
+            remove setTimeout
+        ./node test-erick
+            should work - should receive correct message
+        
+    show building.md 
+        lint, test and cov 
+
+    tools/test.py -J child-process
+        node:internal/child_process:704
+        const messages = target.channel.pendingMessages
+        TypeError: Cannot read properties of null (reading 'pendingMessages')
+        at ChildProcess.<anonymous> (node:internal/child_process:704:39)
+        ...
+        test/parallel/test-child-process-send-after-close.js 
+
+-------- PAUSE -------- 
+    #704  target.on('newListener',
+      if(!target.channel) return;
+
+    run ./node test/parallel/test-child-process-send-after-close.js  
+        it should fix the problem 
+    
+    run tools/test.py -J child-process
+        [00:54|% 100|+ 106|-   0]: Done
+        
+    make lint
+        fix linting problems 
+
+    say that make -j4 test should run after all 
+        529:32  error  Use `const { SafeSet } = primordials;` instead of the global
+        #530
+            this.pendingMessages = new SafeSet();
+        
+    fix all linting problems
+    tools/test.py -J child-process
+        [00:58|% 100|+ 106|-   0]: Done                                               
+        
+    touch test/es-module/test-esm-child-process-fork-main.mjs
+        import '../common/index.mjs';
+        import assert from 'assert';
+        import { fork } from 'child_process';
+        import { once } from 'events';
+        import { fileURLToPath } from 'url';
+
+        if (process.argv[2] !== 'child') {
+            const filename = fileURLToPath(import.meta.url);
+            const cp = fork(filename, ['child']);
+            const message = 'Hello World';
+            cp.send(message);
+
+            const [received] = await once(cp, 'message');
+            assert.deepStrictEqual(received, message);
+
+            cp.disconnect();
+            await once(cp, 'exit');
+        } else {
+            process.on('message', (msg) => process.send(msg));
+        }
+    ./node test/es-module/test-esm-child-process-fork-main.mjs
+    make -j4 test
+
+    commit 
+         child_process: queue pending messages
+         
+         It fixes the problem of the child process not receiving messages.
+
+        Fixes: #41134
+    say about git push on it 
+
+PAUSE #2
+    Analisando as revisões mais importantes
+        process.nextTick James Snells
+            target.on('newListener', function() {
+
+                process.nextTick(() => {
+                if (!target.channel) return;
+
+                const messages = target.channel.pendingMessages;
+                if (!messages.size) return;
+
+                for (const messageParams of messages) {
+                    target.emit(...messageParams);
+                }
+
+                messages.clear();
+                });
+            });
+
+            ./node test/es-module/test-esm-child-process-fork-main.mjs
+            tools/test.py -J child-process
+            make lint 
+            git commit = this can be anything because they merge commits 
+
+    tirar de variável pública para symbol 
+
+    diferença entre symbol e #
+    spread operator and for of
+    não alocar variáveis sem precisar por performance
+        - Eu prefiro armazenar em variáveis sempre por conta de clean code, mas no Node, performance sempre vem em primeiro lugar.
+    sexta revisão: Set vs Array 
+        - Escolhi o tipo set por achar melhor a semântica
+    Explicar o código final da solução
+        https://github.com/nodejs/node/pull/41221/commits/de12141dd0f9a7356dd3fa74515da4c5f389aa4c
+
+END :) 
